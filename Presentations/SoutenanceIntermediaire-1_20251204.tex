@@ -115,34 +115,34 @@
 \subsection{Objectifs}
 \begin{frame}{Objectifs du projet}
     Le projet vise à développer une meilleure caractérisation de la \textbf{"Spoofability"} des marchés.
-    
-    \vspace{0.5cm}
+    \vspace{0.3cm}
+
     \textbf{Objectifs principaux :}
     \begin{enumerate}
-        \item \textbf{Implémentation de modèles et features :} Réseau de neurones \cite{fabre_2025,poutre_2024,tao_2020}, exploration.
+        \item \textbf{Implémentation de modèles et features :} Réseaux de neurones \cite{fabre_2025,poutre_2024,tao_2020}, exploration de l'état de l'art.
         \item \textbf{Comparaison inter-marchés :} 
         \begin{itemize}
             \item Marchés Actions (Régulés, surveillés).
             \item Marchés Crypto (Non régulés, suspicion de forte manipulation).
         \end{itemize}
-        \item \textbf{Validation de l'hypothèse :} Les marchés actions sont-ils structurellement moins sensibles (spoofables) que les marchés crypto ? Arrivons-nous à détecter ces manipulations ? 
+        \item \textbf{Validation de l'hypothèse :} Les marchés actions sont-ils vraiment moins sensibles (spoofables) que les marchés crypto ? Arrivons-nous à détecter ces manipulations ? 
     \end{enumerate}
 \end{frame}
 
 \subsection{Avancement et Plan}
-\begin{frame}{Avancement actuel et Plan de travail}
+\begin{frame}{Avancement actuel et plan de travail}
     \textbf{Réalisé (Mois 1) :}
     \begin{itemize}
         \item Étude bibliographique approfondie (Fabre, Tao, Poutré).
-        \item Prise en main des données (Level 3 Crypto fournies par l'encadrant).
+        \item Prise en main des données (L3 fournies par l'encadrant).
         \item Architecture du code Python structurée (pré-traitement, feature engineering, modèles).
     \end{itemize}
 
     \textbf{Planification (Mois 2-5) :}
     \begin{itemize}
         \item \textbf{Décembre - Janvier :} Implémentation complète et calibration des modèles sur les données. Exploration des features.
-        \item \textbf{Février :} Analyse de sensibilité (Impact de la distance $\delta$ et du volume $Q$ sur la distribution $\Delta p$). Quantification de la spoofability comparée.
-        \item \textbf{Mars :} 
+        \item \textbf{Février :} Analyse de sensibilité. Quantification de la spoofability comparée.
+        \item \textbf{Mars :} Exploration avancée (anomalies, clustering, autres modèles).
         \item \textbf{Avril :} Rédaction du rapport final et préparation soutenance.
     \end{itemize}
 \end{frame}
@@ -171,42 +171,6 @@
 % ==============================================================================
 \section{Méthodologie}
 
-\subsection{Machine Learning}
-
-\begin{frame}{Feature Engineering : Processus de Hawkes}
-    \frametitle{Construction des variables explicatives}
-    Pour capturer la dynamique temporelle et spatiale du carnet, nous utilisons des variables inspirées des processus de Hawkes marqués.
-    
-    Soit $N_t$ le processus de comptage des ordres. On définit les variables de flux $L_t$ (Limit) et $M_t$ (Market) :
-    
-    \begin{equation}
-        L_t(\phi) = \int_{(-\infty, t]} \phi(t-s, v_s, \delta_s) dN_s
-    \end{equation}
-    
-    \begin{itemize}
-        \item \textbf{Noyau $\phi$ :} Intègre trois dimensions cruciales :
-        \begin{itemize}
-            \item \textit{Temps :} Décroissance exponentielle $e^{-\beta t}$ (mémoire du marché).
-            \item \textit{Volume ($v_s$) :} Impact de la taille de l'ordre.
-            \item \textbf{\textit{Distance ($\delta_s$) :}} Distance au mid-price (innovation majeure par rapport à l'imbalance classique).
-        \end{itemize}
-        \item \textbf{Multi-échelles :} Combinaison de plusieurs horizons temporels ($\beta$) et échelles de distance ($\eta$).
-    \end{itemize}
-\end{frame}
-
-\begin{frame}{Architecture du Modèle (PNN)}
-    \frametitle{Réseau de Neurones Probabiliste}
-    L'objectif n'est pas de classifier (Spoof/Pas Spoof) mais d'apprendre la dynamique des prix $P(\Delta p | \mathcal{F}_t)$.
-    
-    \begin{itemize}
-        \item \textbf{Entrée $x$ :} Vecteur de features (Spread, Flux d'ordres Limites multi-échelles, Flux d'ordres Marché).
-        \item \textbf{Modèle :} Feed-forward Neural Network (MLP) léger pour le temps réel.
-        \item \textbf{Sortie $\Theta(x)$ :} Paramètres d'une distribution (ex: Gaussienne Asymétrique).
-        $$ \Delta p \sim \mathcal{SN}(\mu(x), \sigma(x), \alpha(x)) $$
-        \item \textbf{Entraînement :} Maximisation de la vraisemblance (Maximum Likelihood Estimation) sur données historiques saines.
-    \end{itemize}
-\end{frame}
-
 \subsection{Finance Quantitative}
 \begin{frame}{Détection par la "Spoofability"}
     \frametitle{Critère de Détection Financier}
@@ -220,11 +184,26 @@
         \end{enumerate}
     \end{block}
     
-    \begin{alertblock}{Règle de Détection}
+    \begin{block}{Règle de Détection}
         Un ordre $(Q, \delta)$ est suspect si son insertion améliore significativement le coût d'exécution espéré sur le côté opposé :
         $$ \Delta \mathcal{C}(Q, \delta) = \mathbb{E}[C_{\text{normal}}] - \mathbb{E}[C_{\text{spoof}}] > 0 $$
-    \end{alertblock}
-    Le modèle PNN sert à calculer ces espérances en prédisant le mouvement de prix $\Delta p$ induit.
+    \end{block}
+\end{frame}
+
+\subsection{Machine Learning}
+\begin{frame}{Architecture du Modèle (PNN)}
+    \frametitle{Réseau de Neurones Probabiliste}
+    L'objectif n'est pas de classifier (Spoof/Pas Spoof) mais d'apprendre la dynamique des prix $P(\Delta p | \mathcal{F}_t)$.
+    
+    \begin{itemize}
+        \item \textbf{Entrée $x$ :} Vecteur de features (Spread, Flux d'ordres Limites multi-échelles, Flux d'ordres Marché).
+        \item \textbf{Modèle :} Feed-forward Neural Network (MLP) léger pour le temps réel.
+        \item \textbf{Sortie $\Theta(x)$ :} Paramètres d'une distribution (ex: Gaussienne Asymétrique).
+        $$ \Delta p \sim \mathcal{SN}(\mu(x), \sigma(x), \alpha(x)) $$
+        \item \textbf{Entraînement :} Maximisation de la vraisemblance (Maximum Likelihood Estimation) sur données historiques saines.
+    \end{itemize}
+
+    Le modèle PNN sert à calculer les espérances en prédisant le mouvement de prix $\Delta p$ induit.
 \end{frame}
 
 % ==============================================================================
@@ -267,5 +246,29 @@
         \end{itemize}
     \end{block}
 \end{frame}
+
+\subsection{Feature Engineering}
+\begin{frame}{Feature Engineering : Processus de Hawkes}
+    \frametitle{Construction des variables explicatives}
+    Pour capturer la dynamique temporelle et spatiale du carnet, nous utilisons des variables inspirées des processus de Hawkes marqués.
+    
+    Soit $N_t$ le processus de comptage des ordres. On définit les variables de flux $L_t$ (Limit) et $M_t$ (Market) :
+    
+    \begin{equation}
+        L_t(\phi) = \int_{(-\infty, t]} \phi(t-s, v_s, \delta_s) dN_s
+    \end{equation}
+    
+    \begin{itemize}
+        \item \textbf{Noyau $\phi$ :} Intègre trois dimensions cruciales :
+        \begin{itemize}
+            \item \textbf{\textit{Temps :}} Décroissance exponentielle $e^{-\beta t}$ (mémoire du marché).
+            \item \textbf{\textit{Volume ($v_s$) :}} Impact de la taille de l'ordre.
+            \item \textbf{\textit{Distance ($\delta_s$) :}} Distance au mid-price (innovation majeure par rapport à l'imbalance classique).
+        \end{itemize}
+        \item \textbf{Multi-échelles :} Combinaison de plusieurs horizons temporels ($\beta$) et échelles de distance ($\eta$).
+    \end{itemize}
+\end{frame}
+
+
 
 \end{document}
