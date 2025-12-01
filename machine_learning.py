@@ -55,6 +55,7 @@ class BottleneckTransformerEncoder(nn.Module):
 
         return representation
     
+    
 class BottleneckTransformerDecoder(nn.Module):
     """
     Transformer Decoder with Bottleneck Representation
@@ -82,6 +83,7 @@ class BottleneckTransformerDecoder(nn.Module):
 
         return output
     
+
 class TransformerAutoencoder(nn.Module):
     def __init__(self, num_features, model_dim, num_heads, num_layers, representation_dim, sequence_length):
         super(TransformerAutoencoder, self).__init__()
@@ -216,6 +218,7 @@ def conditional_expectation_skewed_gaussian(x_thresh, mu, sigma, alpha, upper=Tr
 
     return E_cond
     
+
 def calculate_expected_cost(mu, sigma, alpha, spread, delta_a, delta_b, Q, q, epsilon_plus=0.0, epsilon_minus=0.05, p_bid=None, p_ask=None, side='ask'):
     """
     Calculate Expected Cost for spoofing detection
@@ -287,6 +290,7 @@ def calculate_expected_cost(mu, sigma, alpha, spread, delta_a, delta_b, Q, q, ep
         expected_cost = cost_1 + cost_2 + cost_3 + cost_4
 
     return expected_cost
+
 
 def compute_spoofing_gain(model, x_original, x_spoofed, spread, delta_a, delta_b, Q, q, fees, side='ask'):
     """

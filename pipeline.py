@@ -30,17 +30,28 @@ class AnomalyDetectionPipeline:
         
         print(f"Pipeline initialized on device: {self.device}")
 
-    def load_data(self, filepath):
-        """Loads data from CSV/Parquet."""
+    def load_data(self, filepath, nrows=None):
+        """
+        Loads data from CSV/Parquet.
+        
+        Args:
+            filepath (str): Path to the data file.
+            nrows (int, optional): Number of rows to read. Defaults to None (read all).
+        """
         print(f"Loading data from {filepath}...")
 
         if filepath.endswith('.csv') or filepath.endswith('.csv.gz'):
-            self.raw_df = pd.read_csv(filepath)
+            self.raw_df = pd.read_csv(filepath, nrows=nrows)
         elif filepath.endswith('.parquet'):
-            self.raw_df = pd.read_parquet(filepath)
+            df = pd.read_parquet(filepath)
+            if nrows:
+                self.raw_df = df.head(nrows)
+            else:
+                self.raw_df = df
         else:
             raise ValueError("Unsupported file format")
         
+        print(f"Successfully loaded {len(self.raw_df)} rows.")
         return self
 
     def engineer_features(self, feature_sets=['base', 'tao', 'poutre', 'hawkes', 'slopes']):
@@ -88,6 +99,16 @@ class AnomalyDetectionPipeline:
         """
         print(f"Preprocessing with method: {method}...")
 
+        # Drop constant columns
+        constant_cols = [col for col in self.processed_df.columns if self.processed_df[col].nunique() <= 1]
+        if constant_cols:
+            print(f"Dropping{constant_cols} constant features: {constant_cols}")
+            self.processed_df = self.processed_df.drop(columns=constant_cols)
+            self.feature_names = self.processed_df.columns.tolist()
+
+        if self.target_col not in self.feature_names:
+            raise ValueError(f"Target column '{self.target_col}' was dropped because it is constant.")
+
         data_values = self.processed_df.values
         
         if method == 'minmax':
@@ -111,9 +132,12 @@ class AnomalyDetectionPipeline:
         # Create sequences
         all_sequences = prep.create_sequences(data_scaled, self.seq_length)
 
-        self.X_seqs = all_sequences[:-1]
         self.y_targets = data_scaled[self.seq_length:, target_idx]
-        self.X_seqs = self.X_seqs[:len(self.y_targets)]
+        
+        min_len = min(len(all_sequences), len(self.y_targets))
+
+        self.X_seqs = all_sequences[:min_len]
+        self.y_targets = self.y_targets[:min_len]
 
         # Split
         train_size = int(len(self.X_seqs) * train_split)
@@ -192,7 +216,7 @@ class AnomalyDetectionPipeline:
 
             # Input dimension
             input_dim = self.seq_length * num_feat
-            self.model = ml.ProbabilisticNeuralNetwork(
+            self.model = ml.ProbabilisticNN(
                 input_dim=input_dim,
                 hidden_dim=hidden_dim
             ).to(self.device)
