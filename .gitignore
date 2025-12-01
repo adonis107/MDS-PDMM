@@ -1,5 +1,13 @@
+# Data
 *.csv.gz
+
+# Folders
+data/
+project_files/
+archive/
 __pycache__/
+
+# Latex files
 *.aux
 *.bbl
 *.bcf
@@ -13,5 +21,4 @@ __pycache__/
 *.fls
 *.fdb_latexmk
 *.run.xml
-project_files/
 
