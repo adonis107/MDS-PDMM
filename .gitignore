@@ -13,5 +13,5 @@ __pycache__/
 *.fls
 *.fdb_latexmk
 *.run.xml
-
+project_files/
 
