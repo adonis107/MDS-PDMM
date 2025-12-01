@@ -161,67 +161,86 @@ def get_slope(prices, volumes, depth):
 
 def extract_features(df, window=50, n_levels = 10, slope_depth = 5, target_size = 1000):
     """
-    Extract engineered features from a level-1..5 orderbook dataframe `df`.
+    Extract fundamental LOB features from raw orderbook DataFrame.
     Returns a DataFrame of features (NaNs kept where appropriate).
     """
     data = pd.DataFrame(df)
+
+    ### Price dynamics ###
     # Mid-price and spread
     data["mid_price"] = (df['ask-price-1'] + df['bid-price-1']) / 2
+    # Wide spreads can indicate illiquidity or uncertainty
     data["spread"] = df['ask-price-1'] - df['bid-price-1']
 
+    ### Imbalances ###
     # Order book imbalance
+    # Values close to 1 indicate strong buy pressure, close to -1 indicate sell pressure
     data["L1_Imbalance"] = (df['bid-volume-1'] - df['ask-volume-1']) / (df['bid-volume-1'] + df['ask-volume-1'])
+    # Imbalance across top 5 levels, to detect layering (volume deep in the book)
     total_bid_volume_5 = df[[f'bid-volume-{i}' for i in range(1, 6)]].sum(axis=1)
     total_ask_volume_5 = df[[f'ask-volume-{i}' for i in range(1, 6)]].sum(axis=1)
     data["L5_Imbalance"] = (total_bid_volume_5 - total_ask_volume_5) / (total_bid_volume_5 + total_ask_volume_5)
 
-    # Fair value deviation from mid-price
+    ### Micro-structure deviation ###
+    # Fair value deviation from mid-price based on L1 imbalance
+    # If the micro-price deviates significantly from mid-price, it may indicate pressure to move price
     data["micro_price_deviation"] = data["L1_Imbalance"] * (data["spread"] / 2)
 
-    # Volume concentration (safe divide)
+    ### Volume concentration ###
+    # Ratio of volume deep in the book (levels 2-5) to volume the top level
+    # High values may indicate high volume orders placed away from best price (layering)
     data['bid_depth_ratio'] = df[[f'bid-volume-{i}' for i in range(2, 6)]].sum(axis=1) / df['bid-volume-1'].replace(0, np.nan)
     data['ask_depth_ratio'] = df[[f'ask-volume-{i}' for i in range(2, 6)]].sum(axis=1) / df['ask-volume-1'].replace(0, np.nan)
     data[['bid_depth_ratio', 'ask_depth_ratio']] = data[['bid_depth_ratio', 'ask_depth_ratio']].fillna(0)
 
-    # Price and volume dynamics
+    ### Dynamics and velocity ###
+    # Log returns
     data["log_return"] = np.log(data["mid_price"] / data["mid_price"].shift(1))
+    # Volume deltas at L1
     data["bid_volume_delta"] = df['bid-volume-1'].diff()
     data["ask_volume_delta"] = df['ask-volume-1'].diff()
 
-    # Simplified net order flow at L1
+    # Net order flow at L1
+    # Differentiates between volume changes due to price shifts vs. cancellations/additions at the same price level
     data["net_bid_flow"] = df['bid-volume-1'].diff() * (df['bid-price-1'] == df['bid-price-1'].shift(1)).astype(int)
     data["net_ask_flow"] = df['ask-volume-1'].diff() * (df['ask-price-1'] == df['ask-price-1'].shift(1)).astype(int)
 
-    # Rolling volatility
+    ### Volatility and risk ###
+    # Standard deviation of returns
+    # High volatility may indicate uncertainty or manipulation attempts
     data["volatility_50"] = data["log_return"].rolling(window=window).std()
     data["volatility_100"] = data["log_return"].rolling(window=2*window).std()
 
-    # High-low range
+    # Price range: captures extreme price movements within the window
     rolling_max = data["mid_price"].rolling(window=window).max()
     rolling_min = data["mid_price"].rolling(window=window).min()
     data["price_range_50"] = (rolling_max - rolling_min) / data["mid_price"]
 
-    # Velocity
+    # Absolute velocity
     data["abs_velocity"] = data["log_return"].abs()
 
-    # Time delta (safe small value to avoid division by zero)
+    # Time delta
     dt = df['xltime'].diff().fillna(0.001)
     dt = dt.replace(0, 0.001)
     data["dt"] = dt
 
+    ### Liquidity cost and elasticity ###
     # Prepare arrays for vectorized sweep cost and slope calculations
     P_bid = np.stack([df[f'bid-price-{i}'].values for i in range(1, n_levels + 1)], axis=1)
     V_bid = np.stack([df[f'bid-volume-{i}'].values for i in range(1, n_levels + 1)], axis=1)
     P_ask = np.stack([df[f'ask-price-{i}'].values for i in range(1, n_levels + 1)], axis=1)
     V_ask = np.stack([df[f'ask-volume-{i}'].values for i in range(1, n_levels + 1)], axis=1)
 
-    # Sweep-to-fill cost (effective spread)
+    # Sweep-to-fill cost
+    # Effective price paid to execute a large order (target_size). Accounts for lack of liquidity at the top level.
     bid_sweep_cost = calculate_sweep_cost(P_bid, V_bid, target_size=target_size)
     ask_sweep_cost = calculate_sweep_cost(P_ask, V_ask, target_size=target_size)
     data["ask_sweep_cost"] = ask_sweep_cost - data["mid_price"]
     data["bid_sweep_cost"] = data["mid_price"] - bid_sweep_cost
 
     # Slope (elasticity) of orderbook sides
+    # Measures how quickly prices change as volume is added/removed
+    # A steep slope indicates low liquidity (small volume causes large price changes), flat slope indicates high liquidity
     data["ask_slope"] = get_slope(P_bid, V_bid, depth=slope_depth)
     data["bid_slope"] = get_slope(P_ask, V_ask, depth=slope_depth)
 
@@ -231,6 +250,9 @@ def extract_features(df, window=50, n_levels = 10, slope_depth = 5, target_size 
 def compute_weighted_imbalance(df, weights=None, levels=5):
     """
     Compute Tao et al. weighted multilevel imbalance from orderbook volumes.
+    Spoofing often happens away from the best price (Level 1) to avoid accidental execution.
+    Standard L1 imbalance may miss these patterns, so we use a weighted imbalance across multiple levels to capture deeper book dynamics.
+
     Returns a pandas Series with values clipped to finite and NaNs replaced by 0.
     """
     if weights is None:
@@ -251,6 +273,10 @@ def compute_weighted_imbalance(df, weights=None, levels=5):
 def compute_rapidity_event_flow_features(df, data=None, sma_window=10):
     """
     Add Poutré et al. rapidity / event-flow features to `data` (or new DataFrame).
+
+    Quote stuffing: excessive number of messages (updates) per time interval. Rapidity captures this.
+    Layering and spoofing: large number of cancellations vs. real trades. Separate cancellations from trades.
+
     Returns the DataFrame with new columns added.
     """
     if data is None:
@@ -264,13 +290,17 @@ def compute_rapidity_event_flow_features(df, data=None, sma_window=10):
     d_volume_bid = df['bid-volume-1'].diff().fillna(0)
     d_volume_ask = df['ask-volume-1'].diff().fillna(0)
 
-    # Event detection
+    ### Event detection ###
+    # Identify what kind of event triggered the LOB update
+    # Cancellation
     is_bid_cancel = (df['bid-price-1'] == df['bid-price-1'].shift(1)) & (d_volume_bid < 0)
     is_ask_cancel = (df['ask-price-1'] == df['ask-price-1'].shift(1)) & (d_volume_ask < 0)
+    # Trade
     is_bid_trade = df['ask-price-1'] != df['ask-price-1'].shift(1)
     is_ask_trade = df['bid-price-1'] != df['bid-price-1'].shift(1)
 
-    # Volumes for events
+    ### Event sizes ###
+    # Magnitude of fake orders (cancellations) vs. real orders (trades)
     data["size_cancel_bid"] = np.where(is_bid_cancel, abs(d_volume_bid), 0)
     data["size_cancel_ask"] = np.where(is_ask_cancel, abs(d_volume_ask), 0)
     data["size_trade_bid"] = np.where(is_bid_trade, df['bid-volume-1'].shift(1).fillna(0), 0)
@@ -293,7 +323,9 @@ def compute_rapidity_event_flow_features(df, data=None, sma_window=10):
             dt = dt.diff().fillna(0.001).replace(0, 0.001)
             data["dt"] = dt
 
-    # Rapidity indicators (I / delta_t)
+    ### Rapidity ###
+    # Measure the density of events per unit time
+    # High cancel rapidity may indicate spoofing activity
     data["rapidity_cancel_bid"] = is_bid_cancel.astype(int) / data["dt"]
     data["rapidity_cancel_ask"] = is_ask_cancel.astype(int) / data["dt"]
     data["rapidity_trade_bid"] = is_bid_trade.astype(int) / data["dt"]
@@ -311,14 +343,20 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
                                      halflife_short=5, halflife_long=50, deep_halflife=10):
     """
     Add Fabre & Challet features. Compute Hawkes-style memory features (limit + market flows), deep insertions and
-    weighted multilevel limit order flows with spatial/time decay. Appends columns to
-    `data` (creates new DataFrame if None) and returns it.
+    weighted multilevel limit order flows with spatial/time decay. 
+
+    Hawkes (memory): captures self-exciting nature of order flows. A burst of buy orders increases the probability of more buy orders. EWMA captures this memory effect.
+    Distance (spatial decay): spoofing orders are sensitive to their distance from the mid-price. Orders placed too far away have low impact, orders too close risk execution.
+        eta (distance scale): controls how quickly the influence of an order decays as it gets further from the mid-price.
+        beta (time scale): controls how quickly the memory of past orders fades over time.
+    
+    Appends columns to `data` (creates new DataFrame if None) and returns it.
     """
     if data is None:
         data = pd.DataFrame(index=df.index)
 
     if etas is None:
-        etas = [0.1, 1.0, 10.0]
+        etas = [0.001, 0.1, 1.0, 10.0]
     if betas is None:
         betas = [10, 100, 1000]
 
@@ -326,7 +364,9 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
     d_volume_bid = df['bid-volume-1'].diff().fillna(0)
     d_volume_ask = df['ask-volume-1'].diff().fillna(0)
 
-    # Limit order flows (new volume at same price level)
+    ### Limit & Market order flows ###
+    # Separate flow that adds liquidity (limit) from flow that consumes liquidity (market)
+    # Market orders are the ground truth, limit orders can be spoofing candidates
     price_change_bid = df['bid-price-1'] != df['bid-price-1'].shift(1)
     price_change_ask = df['ask-price-1'] != df['ask-price-1'].shift(1)
     flow_L_bid = np.where((~price_change_bid) & (d_volume_bid > 0), d_volume_bid, 0)
@@ -341,7 +381,9 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
     flow_M_bid = np.where(e_t > 0, e_t, 0)
     flow_M_ask = np.where(e_t < 0, np.abs(e_t), 0)
 
-    # Hawkes-style short / long features
+    ### Hawkes-style memory features ###
+    # Short vs long term memory for limit orders
+    # Manipulators can create short bursts of activity taht deviate from normal patterns
     data["Hawkes_L_bid_short"] = pd.Series(flow_L_bid, index=df.index).ewm(halflife=halflife_short).mean()
     data["Hawkes_L_ask_short"] = pd.Series(flow_L_ask, index=df.index).ewm(halflife=halflife_short).mean()
     data["Hawkes_M_bid_short"] = pd.Series(flow_M_bid, index=df.index).ewm(halflife=halflife_short).mean()
@@ -350,7 +392,8 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
     data["Hawkes_L_bid_long"] = pd.Series(flow_L_bid, index=df.index).ewm(halflife=halflife_long).mean()
     data["Hawkes_L_ask_long"] = pd.Series(flow_L_ask, index=df.index).ewm(halflife=halflife_long).mean()
 
-    # Deep order insertions (level 5)
+    ### Deep order insertions ###
+    # Anomalous activity deep in the book (level 5) usually indicates layering
     if "bid-volume-5" in df.columns and "ask-volume-5" in df.columns:
         d_volume_bid_L5 = df["bid-volume-5"].diff().fillna(0)
         d_volume_ask_L5 = df["ask-volume-5"].diff().fillna(0)
@@ -359,7 +402,10 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
         data["Deep_order_insertion_bid"] = pd.Series(deep_insertion_bid, index=df.index).ewm(halflife=deep_halflife).mean()
         data["Deep_order_insertion_ask"] = pd.Series(deep_insertion_ask, index=df.index).ewm(halflife=deep_halflife).mean()
 
-    # Weighted multilevel limit order flow with spatial decay
+    ### Weighted flow with spatial and time decay ###
+    # Weight a new order by exp(-eta * distance_from_midprice)
+    # If eta is high, only orders very close to mid-price matter
+    # If eta is low, even distant orders have influence
     mid_price = (df['bid-price-1'] + df['ask-price-1']) / 2
     # initialize per-eta accumulators as Series
     total_weighted_flow_bid = {eta: pd.Series(0.0, index=df.index) for eta in etas}
