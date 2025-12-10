@@ -16,6 +16,7 @@ class data_preprocessor():
         self.boxcox_transformer = PowerTransformer(method='box-cox', standardize=False)
         self.scaler = StandardScaler()
         self.lambdas = None
+        self.min_values = None
 
     def fit(self, X):
         """
@@ -24,7 +25,9 @@ class data_preprocessor():
         Args:
             X: training features (N x d)
         """
-        X_positive = X - X.min(axis=0) + 1e-6  # Shift to positive
+        self.min_values = np.min(X, axis=0)
+        
+        X_positive = X - self.min_values + 1e-6  # Shift to positive for Box-Cox
 
         self.boxcox_transformer.fit(X_positive)
         X_boxcox = self.boxcox_transformer.transform(X_positive)
@@ -41,7 +44,10 @@ class data_preprocessor():
         Args:
             X: features to transform (N x d)
         """
-        X_positive = X - X.min(axis=0) + 1e-6  # Shift to positive
+        if self.min_values is None:
+            raise ValueError("The preprocessor has not been fitted yet. Call 'fit' with training data first.")
+        
+        X_positive = X - self.min_values + 1e-6  # Shift to positive
 
         X_boxcox = self.boxcox_transformer.transform(X_positive)
         X_scaled = self.scaler.transform(X_boxcox)
@@ -58,6 +64,22 @@ class data_preprocessor():
         self.fit(X)
         return self.transform(X)
     
+    def inverse_transform(self, X_scaled):
+        """
+        Reverse the transformation to get original values.
+        Required for interpreting model outputs.
+        """
+        if self.min_values is None:
+            raise ValueError("The preprocessor has not been fitted yet. Call 'fit' with training data first.")
+        
+        # Reverse standard scaling
+        X_boxcox = self.scaler.inverse_transform(X_scaled)
+        # Reverse Box-Cox
+        X_positive = self.boxcox_transformer.inverse_transform(X_boxcox)
+        # Reverse shift
+        X_original = X_positive + self.min_values - 1e-6
+
+        return X_original
 
 def create_sequences(data, seq_length):
     """

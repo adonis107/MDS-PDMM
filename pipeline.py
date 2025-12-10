@@ -1,12 +1,14 @@
-import pandas as pd
 import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
+
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import OneClassSVM
 from sklearn.metrics import roc_auc_score, average_precision_score, fbeta_score, confusion_matrix
-import matplotlib.pyplot as plt
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+
 import preprocessing as prep
 import machine_learning as ml
 
@@ -431,3 +433,71 @@ class AnomalyDetectionPipeline:
         imp_df['Importance'] = (imp_df['Importance'] / imp_df['Importance'].max()) * 100
         
         return imp_df
+    
+    def detect_spoofing(self, Q_spoof=50_000, delta_ticks=5, maker_fee=0.0, taker_fee=0.0005):
+        """
+        Scans the test set for spoofing opportunities using the trained PNN.
+        Computes Delta C (Expected Gain) for a hypothetical spoof order.
+
+        Args:
+            Q_spoof (float, optional): Size of the hypothetical spoof order. Defaults to 50_000.
+            delta_ticks (int, optional): Distance from best quote to place spoof order. Defaults to 5.
+            maker_fee (float, optional): Maker fee rate. Defaults to 0.0.
+            taker_fee (float, optional): Taker fee rate. Defaults to 0.0005.
+        """
+        print(f"Scanning for spoofing (Q={Q_spoof}, dist={delta_ticks} ticks)...")
+
+        # Setup
+        self.model.eval()
+        fees = {'maker': maker_fee, 'taker': taker_fee}
+
+        gains = []
+        indices = []
+
+        hawkes_indices = [i for i, c in enumerate(self.feature_names) if 'Hawkes_L' in c]
+        spread_idx = self.feature_names.index('spread')
+
+        X_tensor = torch.tensor(self.X_test, dtype=torch.float32).to(self.device)
+
+        for i in range(0, len(X_tensor), 10):
+            x_orig_seq = X_tensor[i]
+
+            # Create spoofed sequence
+            x_spoof_seq = x_orig_seq.clone()
+            x_spoof_seq[-1, hawkes_indices] += 1.0
+
+            # Flatten for model input
+            x_orig_flat = x_orig_seq.view(1, -1)
+            x_spoof_flat = x_spoof_seq.view(1, -1)
+
+            # Raw spread for cost calculation
+            # Force float64 (double) precision to avoid overflow during inverse Box-Cox
+            vector_f64 = x_orig_seq[-1].cpu().double().numpy().reshape(1, -1)
+            raw_spread = self.scaler.inverse_transform(vector_f64)[0, spread_idx]
+
+            # Distance in price units
+            tick_size = 0.01
+            delta_price = delta_ticks * tick_size
+
+            # Compute Gain
+            q_genuine = 100
+
+            gain = ml.compute_spoofing_gain(
+                self.model,
+                x_orig_flat,
+                x_spoof_flat,
+                spread=raw_spread,
+                delta_a=0, # Genuine order at best ask
+                delta_b=delta_price, # Spoof order deep in the book
+                Q=Q_spoof,
+                q=q_genuine,
+                fees=fees,
+                side='ask' # Assuming we want to sell
+            )
+
+            if gain > 0:
+                gains.append(gain)
+                indices.append(i)
+
+        print(f"Found {len(indices)} potential spoofing opportunities.")
+        return pd.DataFrame({'Index': indices, 'Expected_Gain': gains})
