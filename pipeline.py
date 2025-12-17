@@ -56,7 +56,7 @@ class AnomalyDetectionPipeline:
         print(f"Successfully loaded {len(self.raw_df)} rows.")
         return self
 
-    def engineer_features(self, feature_sets=['base', 'tao', 'poutre', 'hawkes', 'slopes']):
+    def engineer_features(self, feature_sets=['base', 'tao', 'poutre', 'hawkes', 'ofi']):
         """
         Applies feature engineering based on selected sets.
         Options: 'base' (Basic LOB), 'tao' (Weighted Imbalance), 
@@ -79,6 +79,9 @@ class AnomalyDetectionPipeline:
             
         if 'hawkes' in feature_sets:
             features = prep.compute_hawkes_and_weighted_flow(df, data=features)
+
+        if 'ofi' in feature_sets:
+            features = prep.compute_order_flow_imbalance(df, data=features)
 
         # Cleanup
         features.replace([np.inf, -np.inf], np.nan, inplace=True)

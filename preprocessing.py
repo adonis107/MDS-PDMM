@@ -223,6 +223,10 @@ def extract_features(df, window=50, n_levels = 10, slope_depth = 5, target_size 
     data["bid_volume_delta"] = df['bid-volume-1'].diff()
     data["ask_volume_delta"] = df['ask-volume-1'].diff()
 
+    data["mid_price_velocity"] = data['mid_price'].diff()
+    data["mid_price_acceleration"] = data['mid_price_velocity'].diff()
+    data["mid_price_volatility"] = data['mid_price'].rolling(window=window).std()
+
     # Net order flow at L1
     # Differentiates between volume changes due to price shifts vs. cancellations/additions at the same price level
     data["net_bid_flow"] = df['bid-volume-1'].diff() * (df['bid-price-1'] == df['bid-price-1'].shift(1)).astype(int)
@@ -528,3 +532,31 @@ def load_lobster_data(orderbook_path, message_path, levels=10, nrows=None):
     
     print(f"Successfully loaded {len(lob_df)} LOBSTER rows.")
     return lob_df
+
+
+def compute_order_flow_imbalance(df, data=None, levels=5):
+    """
+    Compute order flow imbalance features based on volume changes at each level.
+    """
+    if data is None:
+        data = pd.DataFrame(index=df.index)
+
+    for i in range(1, levels + 1):
+        bid_p = df[f'bid-price-{i}']
+        ask_p = df[f'ask-price-{i}']
+        bid_v = df[f'bid-volume-{i}']
+        ask_v = df[f'ask-volume-{i}']
+
+        bid_p_prev = bid_p.shift(1)
+        ask_p_prev = ask_p.shift(1)
+        bid_v_prev = bid_v.shift(1)
+        ask_v_prev = ask_v.shift(1)
+
+        bid_flow = np.where(bid_p > bid_p_prev, bid_v,
+                            np.where(bid_p == bid_p_prev, bid_v - bid_v_prev, -bid_v_prev))
+        ask_flow = np.where(ask_p < ask_p_prev, ask_v,
+                            np.where(ask_p == ask_p_prev, ask_v - ask_v_prev, -ask_v_prev))
+
+        data[f'order_flow_imbalance_level_{i}'] = bid_flow - ask_flow
+
+    return data
