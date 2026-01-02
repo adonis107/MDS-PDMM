@@ -100,6 +100,54 @@ class TransformerAutoencoder(nn.Module):
             return self.encoder(x)
         
 
+class ProbabilisticRobustAutoencoder(nn.Module):
+    """
+    PRAE: Probabilistic Robust Autoencoder
+    Based on: "Probabilistic Robust Autoencoders for Outlier Detection" by Lindenbaum et al.
+
+    Wrapper to add stochastic gates (mu) to a base autoencoder model.
+    """
+    def __init__(self, base_autoencoder, num_train_samples, sigma=0.5):
+        super(ProbabilisticRobustAutoencoder, self).__init__()
+        self.ae = base_autoencoder
+        self.num_samples = num_train_samples
+        self.sigma = sigma
+
+        self.mu = nn.Parameter(torch.full((num_train_samples,), 2.0))
+
+    def forward(self, x, indices=None, training=True):
+        """
+        Args:
+            x (torch.Tensor): Input data batch
+            indices (torch.Tensor, optional): Indices of the batch samples in the original training set. Defaults to None.
+            training (bool, optional): Flag indicating training mode. If True, uses stochastic gates. If False, acts as a standard autoencoder. Defaults to True.
+
+        Returns:
+            reconstructed (torch.Tensor): Reconstructed output from the autoencoder.
+            z (torch.Tensor or None): Stochastic gates applied during training, None if not training or indices not provided.
+        """
+        reconstructed = self.ae(x)
+
+        z = None
+        if training and indices is not None:
+            batch_mu = self.mu[indices]
+
+            # Stochastic Gate: z[i] = max(0, min(1, mu[i] + epsilon))
+            noise = torch.randn_like(batch_mu) * self.sigma
+            z = torch.clamp(batch_mu + noise, 0.0, 1.0)
+
+        return reconstructed, z
+    
+    def get_outlier_scores(self):
+        """_summary_
+
+        Returns:
+            _type_: _description_
+        """
+        with torch.no_grad():
+            return self.mu.cpu().numpy()
+
+
 class ProbabilisticNN(nn.Module):
     """
     PNN: Fabre & Challet

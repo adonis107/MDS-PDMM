@@ -13,7 +13,7 @@ import preprocessing as prep
 import machine_learning as ml
 
 class AnomalyDetectionPipeline:
-    def __init__(self, seq_length=25, batch_size=64, device=None,random_state=0):
+    def __init__(self, seq_length=25, batch_size=64, device=None, random_state=0):
         
         self.seq_length = seq_length
         self.batch_size = batch_size
@@ -44,12 +44,12 @@ class AnomalyDetectionPipeline:
 
         if filepath.endswith('.csv') or filepath.endswith('.csv.gz'):
             self.raw_df = pd.read_csv(filepath, nrows=nrows)
+
         elif filepath.endswith('.parquet'):
             df = pd.read_parquet(filepath)
-            if nrows:
-                self.raw_df = df.head(nrows)
-            else:
-                self.raw_df = df
+            if nrows: self.raw_df = df.head(nrows)
+            else: self.raw_df = df
+
         else:
             raise ValueError("Unsupported file format")
         
@@ -60,7 +60,7 @@ class AnomalyDetectionPipeline:
         """
         Applies feature engineering based on selected sets.
         Options: 'base' (Basic LOB), 'tao' (Weighted Imbalance), 
-                 'poutre' (Rapidity), 'hawkes' (Memory), 'slopes' (Elasticity)
+                 'poutre' (Rapidity), 'hawkes' (Memory), 'ofi' (Elasticity)
         """
         print(f"Engineering features: {feature_sets}...")
 
@@ -127,20 +127,19 @@ class AnomalyDetectionPipeline:
         if method == 'minmax':
             self.scaler = MinMaxScaler()
             data_scaled = self.scaler.fit_transform(data_values)
+
         elif method == 'standard':
             self.scaler = StandardScaler()
             data_scaled = self.scaler.fit_transform(data_values)
+
         elif method == 'box-cox':
-            self.scaler = prep.data_preprocessor() # Uses the class from preprocessing.py
+            self.scaler = prep.data_preprocessor()
             data_scaled = self.scaler.fit_transform(data_values)
+
         else:
             raise ValueError(f"Unknown scaler method: {method}")
 
         target_idx = self.feature_names.index(self.target_col)
-        targets = data_scaled[:, target_idx]
-
-        X_data = data_scaled[:-1]
-        y_data = targets[1:]
 
         # Create sequences
         all_sequences = prep.create_sequences(data_scaled, self.seq_length)
@@ -148,7 +147,7 @@ class AnomalyDetectionPipeline:
         self.y_targets = data_scaled[self.seq_length:, target_idx]
         
         min_len = min(len(all_sequences), len(self.y_targets))
-
+        
         self.X_seqs = all_sequences[:min_len]
         self.y_targets = self.y_targets[:min_len]
 
@@ -164,19 +163,33 @@ class AnomalyDetectionPipeline:
         print(f"Data split: Train {self.X_train.shape}, Test {self.X_test.shape}")
         return self
 
-    def _get_dataloader(self, X, y=None, shuffle=True):
+    def _get_dataloader(self, X, y=None, shuffle=True, return_indices=False):
+        """
+        Creates DataLoader.
+
+        Args:
+            X (_type_): input data.
+            y (_type_, optional): target data. Defaults to None.
+            shuffle (bool, optional): If True, shuffles the data. Defaults to True.
+            return_indices (bool, optional): If True, returns (data, index) for PRAE gate updates. Defaults to False.
+        """
         tensor_x = torch.tensor(X, dtype=torch.float32)
+        indices = torch.arange(len(X))
+
         if y is not None:
             tensor_y = torch.tensor(y, dtype=torch.float32)
             dataset = TensorDataset(tensor_x, tensor_y)
+        elif return_indices:
+            dataset = TensorDataset(tensor_x, indices)
         else:
             dataset = TensorDataset(tensor_x, tensor_x) # Autoencoder target is input
+
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
 
-    def train_model(self, model_type='transformer_ocsvm', epochs=5, lr=1e-3, nu=0.01, hidden_dim=64):
+    def train_model(self, model_type='transformer_ocsvm', epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None):
         """
         Trains the selected model architecture.
-        model_type: 'transformer_ocsvm' (default), 'pnn'
+        model_type: 'transformer_ocsvm' (default), 'pnn', 'prae'
         """
         self.model_type = model_type
         num_feat = self.X_train.shape[2]
@@ -256,7 +269,63 @@ class AnomalyDetectionPipeline:
                     optimizer.step()
                     total_loss += loss.item()
                 print(f"Epoch {epoch+1}/{epochs} - Loss: {total_loss/len(train_loader):.6f}")
-            
+        
+        elif model_type == 'prae':
+            print("Initializing Probabilistic Robust Autoencoder (PRAE)...")
+
+            # Base Autoencoder
+            base_ae = ml.TransformerAutoencoder(num_features=num_feat, model_dim=64, num_heads=4, num_layers=2, representation_dim=128, sequence_length=self.seq_length)
+
+            # PRAE Wrapper
+            self.model = ml.ProbabilisticRobustAutoencoder(base_autoencoder=base_ae, num_train_samples=len(self.X_train)).to(self.device)
+
+            # Regularization parameter: lambda
+            # Uses mean energy of samples
+            if lambda_reg is None:
+                train_tensor = torch.tensor(self.X_train, dtype=torch.float32).view(len(self.X_train), -1)
+                mean_energy = torch.mean(torch.sum(train_tensor**2, dim=1)).item()
+
+                lambda_reg = mean_energy / (self.seq_length * num_feat) # normalized by input dim
+                print(f"Auto-tuned lambda (Mean Energy Heuristic): {lambda_reg:.6f}")
+
+            optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+            train_loader = self._get_dataloader(self.X_train, return_indices=True)
+
+            self.model.train()
+            print(f"Training PRAE (lambda={lambda_reg:.6f})...")
+
+            for epoch in range(epochs):
+                total_loss_epoch = 0
+                total_rec_loss = 0
+                total_reg_loss = 0
+
+                for batch_x, batch_idx in train_loader:
+                    batch_x = batch_x.to(self.device)
+                    batch_idx = batch_idx.to(self.device)
+
+                    optimizer.zero_grad()
+                    
+                    # Forward pass
+                    reconstruced, z = self.model(batch_x, indices=batch_idx, training=True)
+
+                    # Per-sample reconstruction loss (MSE), shape: (batch_size,)
+                    error_per_sample = torch.mean((reconstruced - batch_x)**2, dim=[1, 2])
+
+                    # Loss
+                    # Using mean instead of sum for stability
+                    loss_reconstruction = torch.mean(z * error_per_sample)
+                    loss_regularization = - lambda_reg * torch.mean(z)
+                    loss = loss_reconstruction + loss_regularization
+
+                    loss.backward()
+                    optimizer.step()
+
+                    total_loss_epoch += loss.item()
+                    total_rec_loss += loss_reconstruction.item()
+                    total_reg_loss += loss_regularization.item()
+                
+                print(f"Epoch {epoch+1}/{epochs} - Total Loss: {total_loss_epoch/len(train_loader):.6f} | Rec Loss: {total_rec_loss/len(train_loader):.6f} | Reg Loss: {total_reg_loss/len(train_loader):.6f}")
+
         return self
 
     def _get_latent(self, X):
@@ -269,7 +338,10 @@ class AnomalyDetectionPipeline:
         with torch.no_grad():
             for batch in loader:
                 inputs = batch[0].to(self.device)
-                r = self.model.get_representation(inputs)
+                if self.model_type == 'prae':
+                    r = self.model.ae.get_representation(inputs)
+                else:
+                    r = self.model.get_representation(inputs)
                 reps.append(r.cpu().numpy())
 
         return np.concatenate(reps, axis=0)
@@ -360,6 +432,57 @@ class AnomalyDetectionPipeline:
 
         return y_eval, scores, preds
 
+    def evaluate_prae(self, y_true=None):
+        """_summary_
+
+        Args:
+            y_true (_type_, optional): _description_. Defaults to None.
+        """
+        # Evaluate on test set (reconstruction error)
+        loader = self._get_dataloader(self.X_test, shuffle=False)
+        self.model.eval()
+        rec_errors = []
+
+        with torch.no_grad():
+            for batch in loader:
+                inputs = batch[0].to(self.device)
+                
+                # Disable gates using training=False
+                reconstructed, _ = self.model(inputs, training=False)
+                
+                # MSE per sample
+                err = torch.mean((reconstructed - inputs)**2, dim=[1, 2])
+                rec_errors.append(err.cpu().numpy())
+
+        scores_test = np.concatenate(rec_errors)
+
+        # Synthetic Anomalies if no true labels
+        loader_anom = self._get_dataloader(self.X_test * 5.0, shuffle=False)
+        rec_errors_anom = []
+        with torch.no_grad():
+            for batch in loader_anom:
+                inputs = batch[0].to(self.device)
+                
+                reconstructed, _ = self.model(inputs, training=False)
+                
+                err = torch.mean((reconstructed - inputs)**2, dim=[1, 2])
+                rec_errors_anom.append(err.cpu().numpy())
+
+        scores_anom = np.concatenate(rec_errors_anom)
+
+        if y_true is None:
+            scores = np.concatenate([scores_test, scores_anom])
+            y_eval = np.concatenate([np.zeros(len(scores_test)), np.ones(len(scores_anom))])
+        else:
+            scores = scores_test
+            y_eval = y_true
+
+        # Threshold
+        threshold = np.mean(scores_test) + 3 * np.std(scores_test)
+        preds = (scores > threshold).astype(int)
+
+        return y_eval, scores, preds
+
     def evaluate(self, y_true=None):
         """
         Evaluates the model.
@@ -371,8 +494,13 @@ class AnomalyDetectionPipeline:
         # Transformer + OC-SVM Evaluation
         if self.model_type == 'transformer_ocsvm':
             y_eval, scores, preds = self.evaluate_transformer_ocsvm(y_true)
+
         elif self.model_type == 'pnn':
             y_eval, scores, preds = self.evaluate_pnn(y_true)
+
+        elif self.model_type == 'prae':
+            y_eval, scores, preds = self.evaluate_prae(y_true)
+            
         else:
             raise ValueError("Model not implemented or unknown model type.")
 
