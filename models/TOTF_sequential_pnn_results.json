@@ -4,29 +4,69 @@
       "day": 1,
       "file": "2015-01-02-TOTF.PA-book.csv.gz",
       "test_samples": 560127,
-      "AUROC": 0.9333188611533471,
-      "AUPRC": 0.9102361614684998,
-      "F4_Score": 0.45269564701097265
+      "AUROC": 0.9588712956959984,
+      "AUPRC": 0.9473289315005855,
+      "F4_Score": 0.8844929304888947
     },
     {
       "day": 2,
       "file": "2015-01-05-TOTF.PA-book.csv.gz",
       "test_samples": 1084603,
-      "AUROC": 0.9387042152385086,
-      "AUPRC": 0.9150687052879198,
-      "F4_Score": 0.554696271846806
+      "AUROC": 0.9214749441465211,
+      "AUPRC": 0.8944380191626016,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 3,
+      "file": "2015-01-06-TOTF.PA-book.csv.gz",
+      "test_samples": 1097402,
+      "AUROC": 0.4999995443784502,
+      "AUPRC": 0.4999997721893289,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 4,
+      "file": "2015-01-07-TOTF.PA-book.csv.gz",
+      "test_samples": 991694,
+      "AUROC": 0.8842631723756134,
+      "AUPRC": 0.7687938894124455,
+      "F4_Score": 0.1123563894748252
+    },
+    {
+      "day": 5,
+      "file": "2015-01-08-TOTF.PA-book.csv.gz",
+      "test_samples": 971325,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 6,
+      "file": "2015-01-09-TOTF.PA-book.csv.gz",
+      "test_samples": 1165876,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 7,
+      "file": "2015-01-12-TOTF.PA-book.csv.gz",
+      "test_samples": 1075822,
+      "AUROC": 0.9969618396526713,
+      "AUPRC": 0.9831090843102086,
+      "F4_Score": 0.9986224385445599
     }
   ],
   "final_day_morning_metrics": {
-    "test_samples": 167196,
-    "AUROC": 0.9496998939356832,
-    "AUPRC": 0.8804344374767399,
-    "F4_Score": 0.08365494789974019
+    "test_samples": 160332,
+    "AUROC": 1.0,
+    "AUPRC": 1.0000000000000002,
+    "F4_Score": 0.9987834211077904
   },
   "final_day_rest_metrics": {
-    "test_samples": 1097414,
-    "AUROC": 0.9315426891821832,
-    "AUPRC": 0.8956709140399874,
-    "F4_Score": 0.36176022662135754
+    "test_samples": 1042805,
+    "AUROC": 0.9954998918849386,
+    "AUPRC": 0.976584410324462,
+    "F4_Score": 0.571620015127725
   }
 }
